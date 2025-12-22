@@ -131,6 +131,18 @@ object MemeSaver {
                         stickerBitmap.recycle()
                     }
                 }
+                is ComponentType.RemoteSticker -> {
+                    val inputStream = context.contentResolver.openInputStream(type.uri)
+                    val stickerBitmap = BitmapFactory.decodeStream(inputStream)
+                    if (stickerBitmap != null) {
+                        val targetBaseWidthOnBitmap = (100f * density) / scale
+                        val stickerScale = targetBaseWidthOnBitmap / stickerBitmap.width
+                        val matrix = Matrix()
+                        matrix.postScale(stickerScale, stickerScale)
+                        canvas.drawBitmap(stickerBitmap, matrix, Paint(Paint.ANTI_ALIAS_FLAG))
+                        stickerBitmap.recycle()
+                    }
+                }
                 else -> {}
             }
 

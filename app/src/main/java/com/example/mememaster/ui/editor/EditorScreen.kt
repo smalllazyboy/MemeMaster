@@ -47,6 +47,7 @@ import android.widget.Toast
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.layout.onGloballyPositioned
+import java.io.File
 
 @Composable
 fun EditorScreen() {
@@ -72,13 +73,22 @@ fun EditorScreen() {
     // 新增：用于存储编辑区域(Canvas Box)的实际像素大小
     var canvasSize by remember { mutableStateOf(IntSize.Zero) }
 
+    val context = LocalContext.current
+
+    // 1. 获取已下载的贴图列表
+    val downloadedStickers = remember(showStickerSheet) {
+        val folder = File(context.filesDir, "downloaded_stickers")
+        folder.listFiles()?.map { Uri.fromFile(it) } ?: emptyList()
+    }
     // 假设你已经在 drawable 里放了这些图片
     val stickerList = listOf(
         R.drawable.sticker_panda,
-        R.drawable.programer
+        R.drawable.programer,
+        R.drawable.hello,
+        R.drawable.think,
+        R.drawable.obedient
     )
 
-    val context = LocalContext.current
     // 辅助函数：Uri 转 Bitmap
     fun uriToBitmap(uri: Uri): Bitmap {
         return if (Build.VERSION.SDK_INT < 28) {
@@ -190,6 +200,13 @@ fun EditorScreen() {
                                     painter = painterResource(id = type.resId),
                                     contentDescription = null,
                                     modifier = Modifier.size(100.dp) // 初始大小
+                                )
+                            }
+                            is ComponentType.RemoteSticker -> { // 新增渲染逻辑
+                                AsyncImage(
+                                    model = type.uri,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(100.dp)
                                 )
                             }
                             else -> {
@@ -339,6 +356,18 @@ fun EditorScreen() {
                                 components.add(MemeComponent(type = ComponentType.Sticker(resId)))
                                 showStickerSheet = false
                             }
+                    )
+                }
+                // 新增：下载的贴图
+                items(downloadedStickers) { uri ->
+                    AsyncImage(
+                        model = uri,
+                        modifier = Modifier.size(80.dp).clickable {
+                            // 使用我们新定义的 RemoteSticker 类型
+                            components.add(MemeComponent(type = ComponentType.RemoteSticker(uri)))
+                            showStickerSheet = false
+                        },
+                        contentDescription = null
                     )
                 }
             }

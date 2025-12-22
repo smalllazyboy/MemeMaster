@@ -11,6 +11,8 @@ import androidx.compose.runtime.setValue
 sealed class ComponentType {
     data class Text(val content: String, val color: Color = Color.White) : ComponentType()
     data class Sticker(val resId: Int) : ComponentType()
+    // 新增：支持本地或网络 Uri 的贴图
+    data class RemoteSticker(val uri: android.net.Uri) : ComponentType()
     data class Drawing(val path: Path, val color: Color = Color.Red) : ComponentType()
 }
 
