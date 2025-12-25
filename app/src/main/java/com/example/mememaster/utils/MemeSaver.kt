@@ -13,6 +13,7 @@ import android.provider.MediaStore
 import android.widget.Toast
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.width
+import androidx.compose.ui.graphics.toArgb
 import androidx.core.content.ContextCompat
 import androidx.core.graphics.drawable.toBitmap
 import com.example.mememaster.model.ComponentType
@@ -21,15 +22,23 @@ import java.io.File
 import java.io.FileOutputStream
 import java.io.OutputStream
 
+/**
+ * 表情包保存工具类
+ * 负责表情包的位图合成、内部存储保存、系统相册导出等核心功能
+ */
 object MemeSaver {
 
     /**
+     * 合成最终的表情包位图
+     * 基于原始底图和用户添加的组件（文字/贴纸），在原始图片像素尺寸上进行绘制，保证画质无损
+     *
      * @param context 上下文
      * @param baseBitmap 原始高清底图
-     * @param components 组件列表
-     * @param containerWidth 屏幕上编辑区域(灰色Box)的宽度 (px)
-     * @param containerHeight 屏幕上编辑区域(灰色Box)的高度 (px)
-     * @param density 屏幕密度 (用于将 dp 转为 px)
+     * @param components 表情包组件列表（文字/贴纸）
+     * @param containerWidth 屏幕编辑区域宽度（px）
+     * @param containerHeight 屏幕编辑区域高度（px）
+     * @param density 屏幕密度（用于DP与PX单位转换）
+     * @return 合成后的最终位图
      */
     fun createBitmap(
         context: Context,
@@ -39,111 +48,103 @@ object MemeSaver {
         containerHeight: Int,
         density: Float
     ): Bitmap {
-        // 1. 创建画布
-        // 为了保证画质，必须在原始图片大小上进行绘制，而不是屏幕截图大小
+        // 创建可编辑的位图副本，基于原始图片尺寸保证画质
         val resultBitmap = baseBitmap.copy(Bitmap.Config.ARGB_8888, true)
         val canvas = Canvas(resultBitmap)
 
-        // 2. 计算 ContentScale.Fit 的数学逻辑
-        // 计算图片和容器的宽高比
+        // 计算ContentScale.Fit模式下的缩放比例和偏移量
+        // 用于将屏幕坐标转换为原始图片像素坐标
         val viewAspectRatio = containerWidth.toFloat() / containerHeight.toFloat()
         val bitmapAspectRatio = baseBitmap.width.toFloat() / baseBitmap.height.toFloat()
 
-        // 计算缩放比例 (scale) 和 偏移量 (dx, dy)
-        // scale 是 "原始图片像素" 到 "屏幕显示像素" 的比例
         val scale: Float
-        val dx: Float // 图片在容器内的左边距 (px)
-        val dy: Float // 图片在容器内的上边距 (px)
+        val dx: Float // 图片在容器内的水平偏移（px）
+        val dy: Float // 图片在容器内的垂直偏移（px）
 
         if (bitmapAspectRatio > viewAspectRatio) {
-            // 图片更宽 -> 宽度填满，高度居中
+            // 图片宽高比大于容器：宽度填满容器，高度居中
             scale = containerWidth.toFloat() / baseBitmap.width.toFloat()
             dx = 0f
             dy = (containerHeight - baseBitmap.height * scale) / 2f
         } else {
-            // 图片更高 -> 高度填满，宽度居中
+            // 图片宽高比小于容器：高度填满容器，宽度居中
             scale = containerHeight.toFloat() / baseBitmap.height.toFloat()
             dx = (containerWidth - baseBitmap.width * scale) / 2f
             dy = 0f
         }
 
-        // 3. 遍历绘制组件
+        // 遍历绘制所有表情包组件
         components.forEach { component ->
             canvas.save()
 
-            // --- 坐标转换核心公式 ---
-            // 1. 获取组件在屏幕上的坐标 (DP -> PX)
+            // 坐标转换：将屏幕DP坐标转换为原始图片像素坐标
+            // 1. DP转PX
             val screenX = component.offset.x * density
             val screenY = component.offset.y * density
 
-            // 2. 减去图片的显示偏移量 (dx, dy)，得到相对于图片显示区域左上角的坐标
+            // 2. 计算组件相对于图片显示区域的坐标
             val relativeX = screenX - dx
             val relativeY = screenY - dy
 
-            // 3. 除以缩放比例，还原到原始图片的像素坐标系
+            // 3. 还原到原始图片像素坐标系
             val finalX = relativeX / scale
             val finalY = relativeY / scale
 
-            // 移动画布焦点到目标位置
+            // 应用组件的位置、旋转、缩放变换
             canvas.translate(finalX, finalY)
-            // 应用旋转
             canvas.rotate(component.rotation)
-            // 应用缩放 (组件自身的缩放)
             canvas.scale(component.scale, component.scale)
 
+            // 根据组件类型进行绘制
             when (val type = component.type) {
                 is ComponentType.Text -> {
                     val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                        color = type.color.hashCode() // 简单转换颜色，建议完善 Color 转 Int 逻辑
+                        color = type.color.toArgb()
                         style = Paint.Style.FILL
-                        // 字体大小修正：
-                        // UI用的是 HeadlineMedium (约28sp)。
-                        // 计算公式：屏幕上的像素大小 / 图片缩放比例
+                        // 文字大小：UI基准值(28sp)转换为原始图片像素尺寸
                         textSize = (28f * density) / scale
+                        // 文字阴影：按比例适配原始图片尺寸
                         setShadowLayer(5f / scale, 0f, 0f, android.graphics.Color.BLACK)
                     }
 
-                    // 文字垂直对齐修正
-                    // Android Canvas drawText 的 Y 是基线(Baseline)，而 Compose 的 Offset 是左上角(Top-Left)
-                    // 需要向下移动一个 Ascent 的距离
+                    // 修正文字垂直对齐：Canvas.drawText的Y轴是基线，需转换为左上角坐标
                     val fontMetrics = paint.fontMetrics
-                    val baselineOffset = -fontMetrics.ascent // ascent 是负数，所以取反
-
+                    val baselineOffset = -fontMetrics.ascent
                     canvas.drawText(type.content, 0f, baselineOffset, paint)
                 }
+
                 is ComponentType.Sticker -> {
+                    // 加载本地贴纸资源
                     val stickerBitmap = BitmapFactory.decodeResource(context.resources, type.resId)
-                    if (stickerBitmap != null) {
-                        // UI 上贴图默认大小是 100dp
-                        // 计算贴图在原始图片中应该占据的像素宽度
+                    stickerBitmap?.let {
+                        // 计算贴纸在原始图片中的显示尺寸（基准100dp转换为原始像素）
                         val targetBaseWidthOnBitmap = (100f * density) / scale
+                        val stickerScale = targetBaseWidthOnBitmap / it.width
 
-                        val stickerScale = targetBaseWidthOnBitmap / stickerBitmap.width
-
-                        // 绘制贴图
+                        // 绘制贴纸
                         val matrix = Matrix()
                         matrix.postScale(stickerScale, stickerScale)
-                        // 因为我们已经 translate 到了中心点附近 (Compose offset 通常是组件左上角)
-                        // 但 transformable 在 UI 上可能会导致 offset 变为中心点，这取决于你的 UI 实现细节。
-                        // 这里假设 component.offset 指的是组件的 左上角。
-
-                        canvas.drawBitmap(stickerBitmap, matrix, Paint(Paint.ANTI_ALIAS_FLAG))
-                        stickerBitmap.recycle()
+                        canvas.drawBitmap(it, matrix, Paint(Paint.ANTI_ALIAS_FLAG))
+                        it.recycle() // 释放位图资源
                     }
                 }
+
                 is ComponentType.RemoteSticker -> {
+                    // 加载远程/本地文件贴纸
                     val inputStream = context.contentResolver.openInputStream(type.uri)
                     val stickerBitmap = BitmapFactory.decodeStream(inputStream)
-                    if (stickerBitmap != null) {
+                    stickerBitmap?.let {
+                        // 计算贴纸在原始图片中的显示尺寸（基准100dp转换为原始像素）
                         val targetBaseWidthOnBitmap = (100f * density) / scale
-                        val stickerScale = targetBaseWidthOnBitmap / stickerBitmap.width
+                        val stickerScale = targetBaseWidthOnBitmap / it.width
+
+                        // 绘制贴纸
                         val matrix = Matrix()
                         matrix.postScale(stickerScale, stickerScale)
-                        canvas.drawBitmap(stickerBitmap, matrix, Paint(Paint.ANTI_ALIAS_FLAG))
-                        stickerBitmap.recycle()
+                        canvas.drawBitmap(it, matrix, Paint(Paint.ANTI_ALIAS_FLAG))
+                        it.recycle() // 释放位图资源
                     }
                 }
-                else -> {}
             }
 
             canvas.restore()
@@ -152,18 +153,26 @@ object MemeSaver {
         return resultBitmap
     }
 
-    // 2. 新增：保存到应用私有仓库 (Internal Storage)
+    /**
+     * 将合成的位图保存到应用私有内部存储
+     * 存储路径：/data/data/包名/files/my_memes/
+     *
+     * @param context 上下文
+     * @param bitmap 要保存的位图
+     * @return 保存是否成功
+     */
     fun saveToInternalStorage(context: Context, bitmap: Bitmap): Boolean {
         return try {
-            // 创建文件名：Meme_时间戳.jpg
+            // 生成唯一文件名：Meme_时间戳.jpg
             val fileName = "Meme_${System.currentTimeMillis()}.jpg"
-            // 获取应用私有目录 files/my_memes
+            // 创建存储目录
             val directory = File(context.filesDir, "my_memes")
             if (!directory.exists()) {
                 directory.mkdirs()
             }
             val file = File(directory, fileName)
 
+            // 保存位图为JPEG格式
             FileOutputStream(file).use { stream ->
                 bitmap.compress(Bitmap.CompressFormat.JPEG, 100, stream)
             }
@@ -176,11 +185,19 @@ object MemeSaver {
         }
     }
 
-    // 3. 导出：将私有文件导出到系统相册 (External Storage)
+    /**
+     * 将应用私有存储的表情包文件导出到系统相册
+     * Android Q及以上保存到DCIM/MemeMaster目录，以下版本按系统默认处理
+     *
+     * @param context 上下文
+     * @param file 要导出的本地文件
+     */
     fun exportToSystemGallery(context: Context, file: File) {
         try {
+            // 读取私有存储的位图文件
             val bitmap = BitmapFactory.decodeFile(file.absolutePath)
 
+            // 构建媒体库插入参数
             val filename = "Export_${System.currentTimeMillis()}.jpg"
             val contentValues = ContentValues().apply {
                 put(MediaStore.MediaColumns.DISPLAY_NAME, filename)
@@ -190,6 +207,7 @@ object MemeSaver {
                 }
             }
 
+            // 插入到系统媒体库并写入文件
             val uri = context.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues)
             uri?.let {
                 val outputStream: OutputStream? = context.contentResolver.openOutputStream(it)

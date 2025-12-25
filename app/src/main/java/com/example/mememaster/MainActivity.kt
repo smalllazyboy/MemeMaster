@@ -9,8 +9,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
-            // 这里我们不使用默认主题，直接调用我们的主屏幕
-            // 后续我们会在 ui/theme 里定义更高级的主题
+            // 不使用主题，直接调用主屏幕
             MainScreen()
         }
     }

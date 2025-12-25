@@ -20,22 +20,22 @@ import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.input.pointer.pointerInput
 import com.example.mememaster.model.MemeComponent
-import com.example.mememaster.model.ComponentType // 同样需要导入 ComponentType
+import com.example.mememaster.model.ComponentType
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.material.icons.Icons // 为图标导入
-import androidx.compose.material.icons.filled.Add // 为"Add"图标导入
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.ui.window.Dialog
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.rememberTransformableState
 import androidx.compose.foundation.gestures.transformable
-import androidx.compose.ui.graphics.graphicsLayer // 导入用于执行旋转缩放的层
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.foundation.Image
 import androidx.compose.ui.res.painterResource
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import com.example.mememaster.R
-import androidx.compose.foundation.shape.CircleShape // 必须导入圆形形状
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.filled.Close
 import android.graphics.ImageDecoder
 import android.provider.MediaStore
@@ -52,39 +52,39 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.unit.sp
 import java.io.File
 
-@OptIn(ExperimentalFoundationApi::class) // <
+/**
+ * 表情包编辑页面
+ * 提供图片选择、文字/贴纸添加、编辑（缩放/旋转/拖拽）、保存等核心功能
+ */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun EditorScreen() {
-    var selectedImageUri by remember { mutableStateOf<Uri?>(null) }
-    // 管理屏幕上所有的组件（文字、贴图等）
-    val components = remember { mutableStateListOf<MemeComponent>() }
+    // 上下文与基础配置相关
+    val context = LocalContext.current                  // 上下文对象
+    val density = LocalDensity.current.density          // 屏幕密度（用于DP/PX转换）
 
-    // 新增：记录当前正在编辑哪个组件
-    var editingComponent by remember { mutableStateOf<MemeComponent?>(null) }
+    // 核心编辑内容状态
+    var selectedImageUri by remember { mutableStateOf<Uri?>(null) } // 选中的底图Uri
+    val components = remember { mutableStateListOf<MemeComponent>() } // 管理屏幕上所有的组件（文字、贴图等）
 
-    // 👇 新增：专门控制编辑对话框的状态
-    var showEditDialog by remember { mutableStateOf(false) }
+    // 编辑交互状态
+    var editingComponent by remember { mutableStateOf<MemeComponent?>(null) } // 当前正在编辑的组件
+    var showEditDialog by remember { mutableStateOf(false) }                 // 文字编辑对话框显示状态
+    var showStickerSheet by remember { mutableStateOf(false) }               // 贴纸选择面板显示状态
+    var canvasSize by remember { mutableStateOf(IntSize.Zero) }               // 编辑区域(Canvas Box)的实际像素大小
 
-    // 选图启动器（补全逻辑）
-    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) {
+    // 功能组件
+    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { // 图片选择启动器
         selectedImageUri = it
     }
 
-    val density = LocalDensity.current.density
+    // 贴纸加载相关状态
+    var isLoading by remember { mutableStateOf(true) }               // 加载已下载贴纸相关状态
+    var downloadedStickers = remember { mutableStateListOf<Uri>() }  // 已下载贴纸列表
 
-    var showStickerSheet by remember { mutableStateOf(false) }
-
-    // 新增：用于存储编辑区域(Canvas Box)的实际像素大小
-    var canvasSize by remember { mutableStateOf(IntSize.Zero) }
-
-    val context = LocalContext.current
-
-    // 1. 获取已下载的贴图列表（通过异步实现）
-    var isLoading by remember { mutableStateOf(true) }
-//    var downloadedStickers by remember { mutableStateOf(emptyList<Uri>()) }
-    var downloadedStickers = remember { mutableStateListOf<Uri>() }
+    // 加载已下载贴纸列表
     LaunchedEffect(showStickerSheet) {
-        isLoading = true // 开始加载
+        isLoading = true
         try {
             val folder = File(context.filesDir, "downloaded_stickers").apply {
                 mkdirs() // 确保文件夹存在
@@ -92,17 +92,18 @@ fun EditorScreen() {
             // 读取文件夹下所有文件并转为Uri列表
             val uris = folder.listFiles()?.map { Uri.fromFile(it) } ?: emptyList()
 
-            // 核心：mutableStateListOf 不能直接赋值，需先清空再添加
-            downloadedStickers.clear() // 清空旧数据
-            downloadedStickers.addAll(uris) // 添加新数据（触发UI重组）
+            // 清空旧数据并添加新数据（触发UI重组）
+            downloadedStickers.clear()
+            downloadedStickers.addAll(uris)
         } catch (e: Exception) {
             e.printStackTrace()
             Toast.makeText(context, "加载已下载贴纸失败", Toast.LENGTH_SHORT).show()
         } finally {
-            isLoading = false // 无论成功/失败，结束加载
+            isLoading = false // 结束加载状态
         }
     }
-    // 假设你已经在 drawable 里放了这些图片
+
+    // 本地内置贴纸资源列表
     val stickerList = listOf(
         R.drawable.sticker_panda,
         R.drawable.programer,
@@ -111,7 +112,12 @@ fun EditorScreen() {
         R.drawable.obedient
     )
 
-    // 辅助函数：Uri 转 Bitmap
+    /**
+     * 将Uri转换为Bitmap对象
+     * 兼容Android P以下版本的API差异
+     * @param uri 图片Uri
+     * @return 转换后的Bitmap
+     */
     fun uriToBitmap(uri: Uri): Bitmap {
         return if (Build.VERSION.SDK_INT < 28) {
             MediaStore.Images.Media.getBitmap(context.contentResolver, uri)
@@ -125,7 +131,7 @@ fun EditorScreen() {
         Column(modifier = Modifier
             .fillMaxSize()
             .padding(16.dp)) {
-            // --- 灵动画布区 ---
+            // 编辑画布区域
             Box(
                 modifier = Modifier
                     .weight(1f)
@@ -133,7 +139,7 @@ fun EditorScreen() {
                     .clip(RoundedCornerShape(16.dp))
                     .background(Color(224, 224, 224))
                     .onGloballyPositioned { coordinates ->
-                        // 核心：获取画布在屏幕上的实际像素大小
+                        // 获取画布在屏幕上的实际像素大小
                         canvasSize = coordinates.size
                     }
                     .pointerInput(Unit) {
@@ -142,7 +148,7 @@ fun EditorScreen() {
                         })
                     }
             ) {
-                // 1. 底图
+                // 底图展示
                 if (selectedImageUri != null) {
                     AsyncImage(
                         model = selectedImageUri,
@@ -152,15 +158,15 @@ fun EditorScreen() {
                     )
                 }
 
-                // 2. 动态组件层
+                // 渲染所有表情包组件
                 components.forEach { component ->
-                    // 创建缩放和旋转的状态监听器
+                    // 组件缩放/旋转状态监听
                     val state = rememberTransformableState { zoomChange, panChange, rotationChange ->
-                        // 更新缩放
+                        // 更新组件缩放比例
                         component.scale *= zoomChange
-                        // 更新旋转
+                        // 更新组件旋转角度
                         component.rotation += rotationChange
-                        // 同时支持双指移动位置
+                        // 更新组件位置（兼容双指移动）
                         component.offset = Offset(
                             component.offset.x + panChange.x / density,
                             component.offset.y + panChange.y / density
@@ -170,31 +176,29 @@ fun EditorScreen() {
                     Box(
                         modifier = Modifier
                             .offset(component.offset.x.dp, component.offset.y.dp)
-                            // 核心：应用旋转和缩放效果
+                            // 应用缩放和旋转效果
                             .graphicsLayer(
                                 scaleX = component.scale,
                                 scaleY = component.scale,
                                 rotationZ = component.rotation
                             )
-                            // 核心：支持双指变换
+                            // 绑定双指变换手势
                             .transformable(state = state)
                             .pointerInput(component.id) {
-                                // 👇 改进核心：同时处理 拖拽、单击、双击
-                                // 注意：detectDragGestures 会和 detectTapGestures 竞争，
-                                // 建议将点击手势放在前面
+                                // 处理点击/双击手势
                                 detectTapGestures(
                                     onTap = {
-                                        editingComponent = component // 单击选中
+                                        editingComponent = component // 单击选中组件
                                     },
                                     onDoubleTap = {
                                         if (component.type is ComponentType.Text) {
-                                            editingComponent = component // 确保选中的同时弹出弹窗
-                                            showEditDialog = true
+                                            editingComponent = component
+                                            showEditDialog = true // 双击文字组件打开编辑弹窗
                                         }
                                     }
                                 )
                             }
-                            // 单指拖拽逻辑保持不变
+                            // 处理单指拖拽手势
                             .pointerInput(component.id) {
                                 detectDragGestures { change, dragAmount ->
                                     change.consume()
@@ -204,6 +208,7 @@ fun EditorScreen() {
                                     )
                                 }
                             }
+                            // 选中状态边框
                             .border(
                                 width = if (editingComponent == component) 2.dp else 0.dp,
                                 color = if (editingComponent == component) Color(0xFF03DAC5) else Color.Transparent,
@@ -211,6 +216,7 @@ fun EditorScreen() {
                             )
                             .padding(8.dp)
                     ) {
+                        // 根据组件类型渲染UI
                         when (val type = component.type) {
                             is ComponentType.Text -> {
                                 Text(
@@ -226,30 +232,25 @@ fun EditorScreen() {
                                     modifier = Modifier.size(100.dp) // 初始大小
                                 )
                             }
-                            is ComponentType.RemoteSticker -> { // 新增渲染逻辑
+                            is ComponentType.RemoteSticker -> {
                                 AsyncImage(
                                     model = type.uri,
                                     contentDescription = null,
                                     modifier = Modifier.size(100.dp)
                                 )
                             }
-                            else -> {
-
-                            }
                         }
 
-                        // 2. 删除按钮层 (只在被选中时显示)
+                        // 组件删除按钮（仅选中时显示）
                         if (editingComponent == component) {
                             Box(
                                 modifier = Modifier
                                     .align(Alignment.TopEnd)
                                     .offset(x = 10.dp, y = (-10).dp)
                                     .size(24.dp)
-                                    // 使用圆形背景，灰白配色 (例如 0xFFF0F0F0)
                                     .background(Color(0xFFF0F0F0), CircleShape)
-                                    .border(1.dp, Color.LightGray, CircleShape) // 增加细边框更有质感
+                                    .border(1.dp, Color.LightGray, CircleShape)
                                     .pointerInput(Unit) {
-                                        // 👇 关键：删除按钮也要用 detectTapGestures 确保点击灵敏度
                                         detectTapGestures {
                                             components.remove(component)
                                             editingComponent = null
@@ -260,7 +261,7 @@ fun EditorScreen() {
                                 Icon(
                                     imageVector = Icons.Default.Close,
                                     contentDescription = "删除",
-                                    tint = Color.DarkGray, // 深灰图标
+                                    tint = Color.DarkGray,
                                     modifier = Modifier.size(14.dp)
                                 )
                             }
@@ -270,20 +271,19 @@ fun EditorScreen() {
                 }
             }
 
-            // --- 底部工具栏 ---
-            // --- 统一的工具栏排布 ---
+            // 底部操作工具栏
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(top = 8.dp, bottom = 16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp) // 行间距
+                verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                // 第一行：功能按钮
+                // 功能按钮行
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp) // 按钮间距
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    // 换图按钮（带圆角的 OutlinedIconButton 风格）
+                    // 选择图片按钮
                     Surface(
                         modifier = Modifier.size(56.dp),
                         shape = RoundedCornerShape(16.dp),
@@ -295,26 +295,25 @@ fun EditorScreen() {
                         }
                     }
 
-                    // 加文字按钮
+                    // 添加文字按钮
                     Button(
                         onClick = {
                             val newText = MemeComponent(type = ComponentType.Text("新文字"))
                             components.add(newText)
                             editingComponent = newText
-                            // 注意：这里需要配合你之前提到的 showEditDialog = true 逻辑
                         },
                         modifier = Modifier
                             .weight(1f)
                             .height(56.dp),
                         shape = RoundedCornerShape(16.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF6750A4)) // 统一深紫色
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF6750A4))
                     ) {
                         Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(Modifier.width(8.dp))
                         Text("加文字", style = MaterialTheme.typography.labelLarge)
                     }
 
-                    // 加贴图按钮
+                    // 添加贴纸按钮
                     Button(
                         onClick = { showStickerSheet = !showStickerSheet },
                         modifier = Modifier
@@ -329,29 +328,25 @@ fun EditorScreen() {
                     }
                 }
 
-                // 第二行：保存按钮（改为保存到仓库）
+                // 保存到仓库按钮
                 Button(
                     onClick = {
                         selectedImageUri?.let { uri ->
                             try {
                                 val baseBitmap = uriToBitmap(uri)
-                                // 核心修复：传入画布的实际像素尺寸 (canvasSize) 和 density
+                                // 合成最终表情包位图
                                 val resultBitmap = MemeSaver.createBitmap(
                                     context = context,
                                     baseBitmap = baseBitmap,
                                     components = components,
-                                    containerWidth = canvasSize.width, // 使用 onGloballyPositioned 获取的值
+                                    containerWidth = canvasSize.width,
                                     containerHeight = canvasSize.height,
                                     density = density
                                 )
 
-                                val success = MemeSaver.saveToInternalStorage(context, resultBitmap)
-                                if (success) {
-                                    Toast.makeText(context, "保存成功", Toast.LENGTH_SHORT).show()
-                                }
+                                MemeSaver.saveToInternalStorage(context, resultBitmap)
                             } catch (e: Exception) {
                                 e.printStackTrace()
-                                Toast.makeText(context, "保存出错: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
                             }
                         } ?: Toast.makeText(context, "请先选择一张图片", Toast.LENGTH_SHORT).show()
                     },
@@ -365,7 +360,8 @@ fun EditorScreen() {
                 }
             }
         }
-        // 贴图选择面板
+
+        // 贴纸选择面板
         if (showStickerSheet) {
             LazyRow(
                 modifier = Modifier
@@ -381,12 +377,13 @@ fun EditorScreen() {
                             "加载中...",
                             fontSize = 18.sp,
                             modifier = Modifier
-                                .fillMaxWidth() // 占满 LazyRow 的宽度
-                                .height(100.dp) // 匹配 LazyRow 的高度
-                                .wrapContentSize(align = Alignment.Center) // 文字自身居中
+                                .fillMaxWidth()
+                                .height(100.dp)
+                                .wrapContentSize(align = Alignment.Center)
                         )
                     }
                 } else {
+                    // 渲染本地内置贴纸
                     items(stickerList) { resId ->
                         Image(
                             painter = painterResource(id = resId),
@@ -394,32 +391,20 @@ fun EditorScreen() {
                             modifier = Modifier
                                 .size(80.dp)
                                 .clickable {
-                                    // 点击贴图，添加到画布
                                     components.add(MemeComponent(type = ComponentType.Sticker(resId)))
                                     showStickerSheet = false
                                 }
                         )
                     }
-                    // 新增：下载的贴图
+                    // 渲染已下载贴纸
                     items(downloadedStickers) { uri ->
-                        // 1. 从Uri解析出本地文件（因为是已下载的贴纸，Uri对应本地文件）
                         val file = File(uri.path ?: "")
                         AsyncImage(
                             model = uri,
                             modifier = Modifier
                                 .size(80.dp)
-//                                .clickable {
-//                                    // 使用我们新定义的 RemoteSticker 类型
-//                                    components.add(
-//                                        MemeComponent(
-//                                            type = ComponentType.RemoteSticker(
-//                                                uri
-//                                            )
-//                                        )
-//                                    )
-//                                    showStickerSheet = false
                                 .combinedClickable(
-                                    // 原点击功能：添加到components
+                                    // 单击添加贴纸
                                     onClick = {
                                         components.add(
                                             MemeComponent(
@@ -428,13 +413,11 @@ fun EditorScreen() {
                                         )
                                         showStickerSheet = false
                                     },
-                                    // 新增长按功能：删除资源
+                                    // 长按删除贴纸
                                     onLongClick = {
-                                        // 3. 确认文件存在后删除
                                         if (file.exists()) {
                                             val isDeleted = file.delete()
                                             if (isDeleted) {
-                                                // 4. 删除成功后，从列表中移除该Uri（UI自动刷新）
                                                 downloadedStickers.remove(uri)
                                                 Toast.makeText(
                                                     context,
@@ -457,7 +440,8 @@ fun EditorScreen() {
                 }
             }
         }
-        // --- 编辑弹窗控制 ---
+
+        // 文字编辑弹窗
         if (showEditDialog) {
             editingComponent?.let { component ->
                 val currentType = component.type
@@ -476,6 +460,12 @@ fun EditorScreen() {
     }
 }
 
+/**
+ * 文字编辑弹窗
+ * @param initialText 初始文字内容
+ * @param onDismiss 弹窗关闭回调
+ * @param onConfirm 文字确认修改回调
+ */
 @Composable
 fun TextEditDialog(
     initialText: String,
@@ -485,7 +475,7 @@ fun TextEditDialog(
     var text by remember { mutableStateOf(initialText) }
     Dialog(onDismissRequest = onDismiss) {
         Surface(
-            shape = RoundedCornerShape(24.dp), // 高质感大圆角
+            shape = RoundedCornerShape(24.dp),
             color = Color.White,
             tonalElevation = 8.dp
         ) {

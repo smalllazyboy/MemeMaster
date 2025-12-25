@@ -1,7 +1,6 @@
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
-    // 👇 修复点：这里显式加上了 version "2.0.0"
     id("org.jetbrains.kotlin.plugin.compose") version "2.0.0"
 }
 
@@ -32,7 +31,6 @@ android {
         }
     }
     compileOptions {
-        // 👇 建议：Kotlin 2.0 通常配合 Java 17 使用，如果报错可以改回 1.8
         sourceCompatibility = JavaVersion.VERSION_1_8
         targetCompatibility = JavaVersion.VERSION_1_8
     }
@@ -55,7 +53,6 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.7.0")
     implementation("androidx.activity:activity-compose:1.8.2")
 
-    // 👇 建议：使用较新的 BOM 版本以更好地支持 Kotlin 2.0
     implementation(platform("androidx.compose:compose-bom:2024.06.00"))
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-graphics")

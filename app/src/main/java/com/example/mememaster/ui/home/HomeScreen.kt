@@ -41,12 +41,26 @@ import java.net.URLEncoder
 import java.security.MessageDigest
 import com.example.mememaster.R
 
-// 单例缓存类
+/**
+ * 贴纸缓存管理单例
+ * 负责管理贴纸搜索结果、加载状态、已下载文件列表的全局缓存
+ */
 object StickerCache {
+    /** 贴纸搜索结果URL列表 */
     val searchResults = mutableStateListOf<String>()
+
+    /** 数据加载状态标记 */
     var isLoading by mutableStateOf(true)
+
+    /** 已下载贴纸文件名集合 */
     var downloadedFiles by mutableStateOf(emptySet<String>())
 
+    /**
+     * 初始化热门贴纸数据
+     * 首次加载时默认搜索"可爱"关键词的贴纸
+     *
+     * @param context 上下文
+     */
     fun initHotStickers(context: Context) {
         if (searchResults.isEmpty()) {
             CoroutineScope(Dispatchers.IO).launch {
@@ -58,6 +72,11 @@ object StickerCache {
         }
     }
 }
+
+/**
+ * 首页贴纸浏览与搜索界面
+ * 提供贴纸搜索、展示、下载、删除等核心功能
+ */
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun HomeScreen() {
@@ -65,29 +84,24 @@ fun HomeScreen() {
     val scope = rememberCoroutineScope()
     val focusManager = LocalFocusManager.current
 
+    // 搜索框输入内容状态
     var searchQuery by remember { mutableStateOf("") }
 
-    // 初始加载：显示热门表情（搜索关键词默认为“可爱”）
+    // 页面初始化：加载热门贴纸数据
     LaunchedEffect(Unit) {
         StickerCache.initHotStickers(context)
     }
 
-    Column(modifier = Modifier
-        .fillMaxSize()
-        .background(Color(0xFFF0F4F8))) {
-        // 1. 搜索框
-        TextField(
-            value = searchQuery,
-            onValueChange = { searchQuery = it },
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            placeholder = { Text("搜索搜狗表情包...") },
-            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
-            shape = RoundedCornerShape(28.dp),
-            singleLine = true,
-            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-            keyboardActions = KeyboardActions(onSearch = {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0xFFF0F4F8))
+    ) {
+        // 搜索框区域
+        SearchTextField(
+            searchQuery = searchQuery,
+            onSearchQueryChange = { searchQuery = it },
+            onSearch = {
                 focusManager.clearFocus()
                 scope.launch {
                     StickerCache.isLoading = true
@@ -96,181 +110,290 @@ fun HomeScreen() {
                     StickerCache.searchResults.addAll(fetchFromSogou(query))
                     StickerCache.isLoading = false
                 }
-            }),
-            colors = TextFieldDefaults.textFieldColors(
-                containerColor = Color.White,
-                focusedIndicatorColor = Color.Transparent,
-                unfocusedIndicatorColor = Color.Transparent
-            )
+            }
         )
 
-        if (StickerCache.isLoading) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-        if (!StickerCache.isLoading && StickerCache.searchResults.isEmpty()) {
-            // 空状态UI：居中显示“无表情包”图片+文字
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .fillMaxHeight()
-                    .padding(vertical = 32.dp), // 上下留白，和列表区域对齐
-                contentAlignment = Alignment.Center
-            ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    // 空状态图片（替换成你的占位图资源，比如R.drawable.ic_no_sticker）
-                    Image(
-                        painter = painterResource(id = R.drawable.found_fail),
-                        contentDescription = "暂无表情包",
-                        modifier = Modifier.size(120.dp),
-                        alpha = 0.6f // 降低透明度，视觉更柔和
-                    )
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Text(
-                        text = "没有搜索到相关表情包",
-                        fontSize = 16.sp,
-                        color = Color.Gray,
-                        fontWeight = FontWeight.Medium
-                    )
-                }
-            }
-
+        // 加载进度指示器
+        if (StickerCache.isLoading) {
+            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
         }
-        // 2. 网格列表
-        LazyVerticalGrid(
-            columns = GridCells.Fixed(3),
-            contentPadding = PaddingValues(16.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            items(StickerCache.searchResults) { url ->
-                val fileName = generateFileName(url)
-                val isDownloaded = StickerCache.downloadedFiles.contains(fileName)
-                var isDownloading by remember { mutableStateOf(false) }
 
-                Box(
-                    modifier = Modifier
-                        .aspectRatio(1f)
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(Color.White)
-                        .combinedClickable(
-                            onClick = {
-                                if (isDownloaded) {
-                                    Toast.makeText(context, "已在库中", Toast.LENGTH_SHORT)
-                                        .show()
-                                } else {
-                                    isDownloading = true
-                                    scope.launch { // 在协程中调用
-                                        downloadSticker(context, url) {
-                                            StickerCache.downloadedFiles =
-                                                getDownloadedFileNames(context)
-                                            isDownloading = false
-                                        }
-                                    }
-                                }
-                            },
-                            onLongClick = {
-                                if (isDownloaded) {
-                                    deleteSticker(context, fileName) {
-                                        StickerCache.downloadedFiles =
-                                            getDownloadedFileNames(context)
-                                        Toast.makeText(
-                                            context,
-                                            "已成功移除",
-                                            Toast.LENGTH_SHORT
-                                        ).show()
-                                    }
-                                }
-                            }
-                        )
-                ) {
-                    AsyncImage(
-                        model = url,
-                        contentDescription = null,
-                        modifier = Modifier.fillMaxSize(),
-                        contentScale = ContentScale.Crop
-                    )
-                    // 显示下载中提示
-                    if (isDownloading) {
-                        CircularProgressIndicator(modifier = Modifier.size(24.dp))
-                    }
-                    // 已下载状态可视化
-                    if (isDownloaded) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .background(Color.Black.copy(alpha = 0.4f)),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                Icons.Default.CheckCircle,
-                                contentDescription = null,
-                                tint = Color.Green
-                            )
-                        }
-                    }
-                }
-            }
+        // 空状态展示
+        if (!StickerCache.isLoading && StickerCache.searchResults.isEmpty()) {
+            EmptyStateView()
+        }
 
+        // 贴纸网格列表
+        StickerGridView(
+            context = context,
+            scope = scope
+        )
+    }
+}
+
+/**
+ * 搜索输入框组件
+ *
+ * @param searchQuery 当前搜索关键词
+ * @param onSearchQueryChange 搜索关键词变更回调
+ * @param onSearch 搜索执行回调
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SearchTextField(
+    searchQuery: String,
+    onSearchQueryChange: (String) -> Unit,
+    onSearch: () -> Unit
+) {
+    TextField(
+        value = searchQuery,
+        onValueChange = onSearchQueryChange,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(16.dp),
+        placeholder = { Text("搜索搜狗表情包...") },
+        leadingIcon = { Icon(Icons.Default.Search, contentDescription = "搜索图标") },
+        shape = RoundedCornerShape(28.dp),
+        singleLine = true,
+        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+        keyboardActions = KeyboardActions(onSearch = { onSearch() }),
+        colors = TextFieldDefaults.textFieldColors(
+            containerColor = Color.White,
+            focusedIndicatorColor = Color.Transparent,
+            unfocusedIndicatorColor = Color.Transparent
+        )
+    )
+}
+
+/**
+ * 空状态展示组件
+ * 当搜索结果为空时显示的提示界面
+ */
+@Composable
+private fun EmptyStateView() {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .fillMaxHeight()
+            .padding(vertical = 32.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Image(
+                painter = painterResource(id = R.drawable.found_fail),
+                contentDescription = "暂无表情包",
+                modifier = Modifier.size(120.dp),
+                alpha = 0.6f
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+            Text(
+                text = "没有搜索到相关表情包",
+                fontSize = 16.sp,
+                color = Color.Gray,
+                fontWeight = FontWeight.Medium
+            )
         }
     }
 }
 
 /**
- * 核心：模拟搜狗图片搜索接口 (API原理同教程)
+ * 贴纸网格展示组件
+ *
+ * @param context 上下文
+ * @param scope 协程作用域
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun StickerGridView(
+    context: Context,
+    scope: CoroutineScope
+) {
+    LazyVerticalGrid(
+        columns = GridCells.Fixed(3),
+        contentPadding = PaddingValues(16.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        items(StickerCache.searchResults) { url ->
+            val fileName = generateFileName(url)
+            val isDownloaded = StickerCache.downloadedFiles.contains(fileName)
+            var isDownloading by remember { mutableStateOf(false) }
+
+            Box(
+                modifier = Modifier
+                    .aspectRatio(1f)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(Color.White)
+                    .combinedClickable(
+                        onClick = {
+                            if (isDownloaded) {
+                                Toast.makeText(context, "已在库中", Toast.LENGTH_SHORT).show()
+                            } else {
+                                isDownloading = true
+                                scope.launch {
+                                    downloadSticker(context, url) {
+                                        StickerCache.downloadedFiles = getDownloadedFileNames(context)
+                                        isDownloading = false
+                                    }
+                                }
+                            }
+                        },
+                        onLongClick = {
+                            if (isDownloaded) {
+                                deleteSticker(context, fileName) {
+                                    StickerCache.downloadedFiles = getDownloadedFileNames(context)
+                                    Toast.makeText(context, "已成功移除", Toast.LENGTH_SHORT).show()
+                                }
+                            }
+                        }
+                    )
+            ) {
+                // 贴纸图片展示
+                AsyncImage(
+                    model = url,
+                    contentDescription = "贴纸图片",
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Crop
+                )
+
+                // 下载中进度提示
+                if (isDownloading) {
+                    CircularProgressIndicator(
+                        modifier = Modifier
+                            .size(24.dp)
+                            .align(Alignment.Center)
+                    )
+                }
+
+                // 已下载状态标记
+                if (isDownloaded) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(Color.Black.copy(alpha = 0.4f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            Icons.Default.CheckCircle,
+                            contentDescription = "已下载",
+                            tint = Color.Green,
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 从搜狗图片接口获取贴纸数据
+ *
+ * @param keyword 搜索关键词
+ * @return 贴纸图片URL列表
  */
 suspend fun fetchFromSogou(keyword: String): List<String> = withContext(Dispatchers.IO) {
-    val list = mutableListOf<String>()
+    val stickerList = mutableListOf<String>()
     try {
+        // 编码搜索关键词
         val encodedKey = URLEncoder.encode(keyword, "UTF-8")
-        // 搜狗图片搜索 API 节点
-//        val url = "https://cn.apihz.cn/api/img/apihzbqbsougou.php?id=88888888&key=88888888&page=1&words=伤心"
-        val url = "https://qyapi.ipaybuy.cn/api/bqbsougou?id=115016&key=1a4f8drgz00df6zzov1pe9j100edlct1&words=$encodedKey&page=1"
-        val response = URL(url).readText()
-        val json = JSONObject(response)
+        // 搜狗图片搜索API接口
+        val apiUrl = "https://qyapi.ipaybuy.cn/api/bqbsougou?id=115016&key=1a4f8drgz00df6zzov1pe9j100edlct1&words=$encodedKey&page=1"
 
-        // 关键适配：res 字段直接是字符串数组
-        if (json.has("res")) {
-            val resArray = json.getJSONArray("res")
+        // 发起网络请求并解析响应
+        val response = URL(apiUrl).readText()
+        val jsonObject = JSONObject(response)
+
+        // 解析贴纸URL数组
+        if (jsonObject.has("res")) {
+            val resArray = jsonObject.getJSONArray("res")
             for (i in 0 until resArray.length()) {
-                list.add(resArray.getString(i)) // 直接获取字符串
+                stickerList.add(resArray.getString(i))
             }
         }
     } catch (e: Exception) {
         e.printStackTrace()
     }
-    list
+    stickerList
 }
 
-// 文件名管理：根据URL生成唯一ID
+/**
+ * 根据URL生成唯一的文件名
+ * 使用MD5哈希保证文件名唯一性
+ *
+ * @param url 图片URL
+ * @return 唯一文件名
+ */
 fun generateFileName(url: String): String {
-    val bytes = MessageDigest.getInstance("MD5").digest(url.toByteArray())
-    return "sogou_${bytes.joinToString("") { "%02x".format(it) }}.png"
+    return try {
+        val md5Digest = MessageDigest.getInstance("MD5")
+        val hashBytes = md5Digest.digest(url.toByteArray())
+        val fileName = hashBytes.joinToString("") { "%02x".format(it) }
+        "sogou_$fileName.png"
+    } catch (e: Exception) {
+        // 哈希生成失败时使用时间戳兜底
+        "sogou_${System.currentTimeMillis()}.png"
+    }
 }
 
+/**
+ * 获取已下载贴纸文件名称集合
+ *
+ * @param context 上下文
+ * @return 已下载文件名称集合
+ */
 fun getDownloadedFileNames(context: Context): Set<String> {
-    val folder = File(context.filesDir, "downloaded_stickers")
-    return folder.listFiles()?.map { it.name }?.toSet() ?: emptySet()
+    val downloadFolder = File(context.filesDir, "downloaded_stickers")
+    return downloadFolder.listFiles()?.map { it.name }?.toSet() ?: emptySet()
 }
 
+/**
+ * 下载贴纸文件到本地存储
+ *
+ * @param context 上下文
+ * @param url 贴纸图片URL
+ * @param onDone 下载完成回调
+ */
 suspend fun downloadSticker(context: Context, url: String, onDone: () -> Unit) {
     withContext(Dispatchers.IO) {
         try {
-            val folder = File(context.filesDir, "downloaded_stickers")
-            if (!folder.exists()) folder.mkdirs()
-            val file = File(folder, generateFileName(url))
-
-            URL(url).openStream().use { input ->
-                file.outputStream().use { output -> input.copyTo(output) }
+            // 创建下载目录
+            val downloadFolder = File(context.filesDir, "downloaded_stickers")
+            if (!downloadFolder.exists()) {
+                downloadFolder.mkdirs()
             }
+
+            // 创建文件并写入数据
+            val stickerFile = File(downloadFolder, generateFileName(url))
+            URL(url).openStream().use { inputStream ->
+                stickerFile.outputStream().use { outputStream ->
+                    inputStream.copyTo(outputStream)
+                }
+            }
+
+            // 主线程回调并提示
             withContext(Dispatchers.Main) {
                 onDone()
                 Toast.makeText(context, "下载成功，请去编辑器查看", Toast.LENGTH_SHORT).show()
             }
         } catch (e: Exception) {
-            withContext(Dispatchers.Main) { Toast.makeText(context, "下载失败", Toast.LENGTH_SHORT).show() }
+            withContext(Dispatchers.Main) {
+                Toast.makeText(context, "下载失败", Toast.LENGTH_SHORT).show()
+            }
         }
     }
 }
 
+/**
+ * 删除已下载的贴纸文件
+ *
+ * @param context 上下文
+ * @param fileName 要删除的文件名
+ * @param onDone 删除完成回调
+ */
 fun deleteSticker(context: Context, fileName: String, onDone: () -> Unit) {
-    val file = File(File(context.filesDir, "downloaded_stickers"), fileName)
-    if (file.exists() && file.delete()) onDone()
+    val stickerFile = File(File(context.filesDir, "downloaded_stickers"), fileName)
+    if (stickerFile.exists() && stickerFile.delete()) {
+        onDone()
+    }
 }
