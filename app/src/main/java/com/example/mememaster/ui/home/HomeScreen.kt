@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import android.widget.Toast
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
@@ -23,9 +24,13 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -34,7 +39,25 @@ import java.io.File
 import java.net.URL
 import java.net.URLEncoder
 import java.security.MessageDigest
+import com.example.mememaster.R
 
+// 单例缓存类
+object StickerCache {
+    val searchResults = mutableStateListOf<String>()
+    var isLoading by mutableStateOf(true)
+    var downloadedFiles by mutableStateOf(emptySet<String>())
+
+    fun initHotStickers(context: Context) {
+        if (searchResults.isEmpty()) {
+            CoroutineScope(Dispatchers.IO).launch {
+                isLoading = true
+                searchResults.addAll(fetchFromSogou("可爱"))
+                downloadedFiles = getDownloadedFileNames(context)
+                isLoading = false
+            }
+        }
+    }
+}
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun HomeScreen() {
@@ -43,25 +66,22 @@ fun HomeScreen() {
     val focusManager = LocalFocusManager.current
 
     var searchQuery by remember { mutableStateOf("") }
-    val searchResults = remember { mutableStateListOf<String>() }
-    var isLoading by remember { mutableStateOf(false) }
 
-    // 本地已下载文件名列表，用于查重
-    var downloadedFiles by remember { mutableStateOf(getDownloadedFileNames(context)) }
-
-    // 初始加载：显示热门表情（搜索关键词默认为“表情包”）
+    // 初始加载：显示热门表情（搜索关键词默认为“可爱”）
     LaunchedEffect(Unit) {
-        isLoading = true
-        searchResults.addAll(fetchFromSogou("表情包"))
-        isLoading = false
+        StickerCache.initHotStickers(context)
     }
 
-    Column(modifier = Modifier.fillMaxSize().background(Color(0xFFF0F4F8))) {
+    Column(modifier = Modifier
+        .fillMaxSize()
+        .background(Color(0xFFF0F4F8))) {
         // 1. 搜索框
         TextField(
             value = searchQuery,
             onValueChange = { searchQuery = it },
-            modifier = Modifier.fillMaxWidth().padding(16.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
             placeholder = { Text("搜索搜狗表情包...") },
             leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
             shape = RoundedCornerShape(28.dp),
@@ -70,11 +90,11 @@ fun HomeScreen() {
             keyboardActions = KeyboardActions(onSearch = {
                 focusManager.clearFocus()
                 scope.launch {
-                    isLoading = true
-                    searchResults.clear()
-                    val query = if (searchQuery.isEmpty()) "表情包" else searchQuery
-                    searchResults.addAll(fetchFromSogou(query))
-                    isLoading = false
+                    StickerCache.isLoading = true
+                    StickerCache.searchResults.clear()
+                    val query = if (searchQuery.isEmpty()) "可爱" else searchQuery
+                    StickerCache.searchResults.addAll(fetchFromSogou(query))
+                    StickerCache.isLoading = false
                 }
             }),
             colors = TextFieldDefaults.textFieldColors(
@@ -84,8 +104,35 @@ fun HomeScreen() {
             )
         )
 
-        if (isLoading) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+        if (StickerCache.isLoading) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+        if (!StickerCache.isLoading && StickerCache.searchResults.isEmpty()) {
+            // 空状态UI：居中显示“无表情包”图片+文字
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .fillMaxHeight()
+                    .padding(vertical = 32.dp), // 上下留白，和列表区域对齐
+                contentAlignment = Alignment.Center
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    // 空状态图片（替换成你的占位图资源，比如R.drawable.ic_no_sticker）
+                    Image(
+                        painter = painterResource(id = R.drawable.found_fail),
+                        contentDescription = "暂无表情包",
+                        modifier = Modifier.size(120.dp),
+                        alpha = 0.6f // 降低透明度，视觉更柔和
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(
+                        text = "没有搜索到相关表情包",
+                        fontSize = 16.sp,
+                        color = Color.Gray,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+            }
 
+        }
         // 2. 网格列表
         LazyVerticalGrid(
             columns = GridCells.Fixed(3),
@@ -93,9 +140,10 @@ fun HomeScreen() {
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            items(searchResults) { url ->
+            items(StickerCache.searchResults) { url ->
                 val fileName = generateFileName(url)
-                val isDownloaded = downloadedFiles.contains(fileName)
+                val isDownloaded = StickerCache.downloadedFiles.contains(fileName)
+                var isDownloading by remember { mutableStateOf(false) }
 
                 Box(
                     modifier = Modifier
@@ -105,11 +153,15 @@ fun HomeScreen() {
                         .combinedClickable(
                             onClick = {
                                 if (isDownloaded) {
-                                    Toast.makeText(context, "已在库中", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(context, "已在库中", Toast.LENGTH_SHORT)
+                                        .show()
                                 } else {
-                                    scope.launch {
+                                    isDownloading = true
+                                    scope.launch { // 在协程中调用
                                         downloadSticker(context, url) {
-                                            downloadedFiles = getDownloadedFileNames(context)
+                                            StickerCache.downloadedFiles =
+                                                getDownloadedFileNames(context)
+                                            isDownloading = false
                                         }
                                     }
                                 }
@@ -117,8 +169,13 @@ fun HomeScreen() {
                             onLongClick = {
                                 if (isDownloaded) {
                                     deleteSticker(context, fileName) {
-                                        downloadedFiles = getDownloadedFileNames(context)
-                                        Toast.makeText(context, "已成功移除", Toast.LENGTH_SHORT).show()
+                                        StickerCache.downloadedFiles =
+                                            getDownloadedFileNames(context)
+                                        Toast.makeText(
+                                            context,
+                                            "已成功移除",
+                                            Toast.LENGTH_SHORT
+                                        ).show()
                                     }
                                 }
                             }
@@ -130,18 +187,28 @@ fun HomeScreen() {
                         modifier = Modifier.fillMaxSize(),
                         contentScale = ContentScale.Crop
                     )
-
+                    // 显示下载中提示
+                    if (isDownloading) {
+                        CircularProgressIndicator(modifier = Modifier.size(24.dp))
+                    }
                     // 已下载状态可视化
                     if (isDownloaded) {
                         Box(
-                            modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.4f)),
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(Color.Black.copy(alpha = 0.4f)),
                             contentAlignment = Alignment.Center
                         ) {
-                            Icon(Icons.Default.CheckCircle, contentDescription = null, tint = Color.Green)
+                            Icon(
+                                Icons.Default.CheckCircle,
+                                contentDescription = null,
+                                tint = Color.Green
+                            )
                         }
                     }
                 }
             }
+
         }
     }
 }
@@ -154,7 +221,8 @@ suspend fun fetchFromSogou(keyword: String): List<String> = withContext(Dispatch
     try {
         val encodedKey = URLEncoder.encode(keyword, "UTF-8")
         // 搜狗图片搜索 API 节点
-        val url = "https://cn.apihz.cn/api/img/apihzbqbsougou.php?id=88888888&key=88888888&page=1&words=伤心"
+//        val url = "https://cn.apihz.cn/api/img/apihzbqbsougou.php?id=88888888&key=88888888&page=1&words=伤心"
+        val url = "https://qyapi.ipaybuy.cn/api/bqbsougou?id=115016&key=1a4f8drgz00df6zzov1pe9j100edlct1&words=$encodedKey&page=1"
         val response = URL(url).readText()
         val json = JSONObject(response)
 

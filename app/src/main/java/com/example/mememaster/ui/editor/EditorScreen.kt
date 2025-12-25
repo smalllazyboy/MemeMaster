@@ -47,6 +47,7 @@ import android.widget.Toast
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.unit.sp
 import java.io.File
 
 @Composable
@@ -75,10 +76,15 @@ fun EditorScreen() {
 
     val context = LocalContext.current
 
-    // 1. 获取已下载的贴图列表
-    val downloadedStickers = remember(showStickerSheet) {
-        val folder = File(context.filesDir, "downloaded_stickers")
-        folder.listFiles()?.map { Uri.fromFile(it) } ?: emptyList()
+    // 1. 获取已下载的贴图列表（通过异步实现）
+    var isLoading by remember { mutableStateOf(true) }
+    var downloadedStickers by remember { mutableStateOf(emptyList<Uri>()) }
+    LaunchedEffect(showStickerSheet) {
+        isLoading = true // 开始加载
+        val folder = File(context.filesDir, "downloaded_stickers").apply { mkdirs() }
+        val uris = folder.listFiles()?.map { Uri.fromFile(it) } ?: emptyList()
+        downloadedStickers = uris
+        isLoading = false // 加载完成
     }
     // 假设你已经在 drawable 里放了这些图片
     val stickerList = listOf(
@@ -100,7 +106,9 @@ fun EditorScreen() {
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
-        Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
+        Column(modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp)) {
             // --- 灵动画布区 ---
             Box(
                 modifier = Modifier
@@ -279,7 +287,9 @@ fun EditorScreen() {
                             editingComponent = newText
                             // 注意：这里需要配合你之前提到的 showEditDialog = true 逻辑
                         },
-                        modifier = Modifier.weight(1f).height(56.dp),
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(56.dp),
                         shape = RoundedCornerShape(16.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF6750A4)) // 统一深紫色
                     ) {
@@ -291,7 +301,9 @@ fun EditorScreen() {
                     // 加贴图按钮
                     Button(
                         onClick = { showStickerSheet = !showStickerSheet },
-                        modifier = Modifier.weight(1f).height(56.dp),
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(56.dp),
                         shape = RoundedCornerShape(16.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF6750A4))
                     ) {
@@ -327,7 +339,9 @@ fun EditorScreen() {
                             }
                         } ?: Toast.makeText(context, "请先选择一张图片", Toast.LENGTH_SHORT).show()
                     },
-                    modifier = Modifier.fillMaxWidth().height(56.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(56.dp),
                     shape = RoundedCornerShape(16.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF03DAC5))
                 ) {
@@ -345,30 +359,51 @@ fun EditorScreen() {
                     .padding(8.dp),
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                items(stickerList) { resId ->
-                    Image(
-                        painter = painterResource(id = resId),
-                        contentDescription = null,
-                        modifier = Modifier
-                            .size(80.dp)
-                            .clickable {
-                                // 点击贴图，添加到画布
-                                components.add(MemeComponent(type = ComponentType.Sticker(resId)))
-                                showStickerSheet = false
-                            }
-                    )
-                }
-                // 新增：下载的贴图
-                items(downloadedStickers) { uri ->
-                    AsyncImage(
-                        model = uri,
-                        modifier = Modifier.size(80.dp).clickable {
-                            // 使用我们新定义的 RemoteSticker 类型
-                            components.add(MemeComponent(type = ComponentType.RemoteSticker(uri)))
-                            showStickerSheet = false
-                        },
-                        contentDescription = null
-                    )
+                if (isLoading) {
+                    item{
+                        Text(
+                            "加载中...",
+                            fontSize = 18.sp,
+                            modifier = Modifier
+                                .fillMaxWidth() // 占满 LazyRow 的宽度
+                                .height(100.dp) // 匹配 LazyRow 的高度
+                                .wrapContentSize(align = Alignment.Center) // 文字自身居中
+                        )
+                    }
+                } else {
+                    items(stickerList) { resId ->
+                        Image(
+                            painter = painterResource(id = resId),
+                            contentDescription = null,
+                            modifier = Modifier
+                                .size(80.dp)
+                                .clickable {
+                                    // 点击贴图，添加到画布
+                                    components.add(MemeComponent(type = ComponentType.Sticker(resId)))
+                                    showStickerSheet = false
+                                }
+                        )
+                    }
+                    // 新增：下载的贴图
+                    items(downloadedStickers) { uri ->
+                        AsyncImage(
+                            model = uri,
+                            modifier = Modifier
+                                .size(80.dp)
+                                .clickable {
+                                    // 使用我们新定义的 RemoteSticker 类型
+                                    components.add(
+                                        MemeComponent(
+                                            type = ComponentType.RemoteSticker(
+                                                uri
+                                            )
+                                        )
+                                    )
+                                    showStickerSheet = false
+                                },
+                            contentDescription = null
+                        )
+                    }
                 }
             }
         }
